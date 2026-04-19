@@ -1,0 +1,5 @@
+# Core dependencies for the self-pruning neural network
+torch==2.3.1
+torchvision==0.18.1
+numpy==1.26.4
+matplotlib==3.9.2
