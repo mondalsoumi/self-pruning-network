@@ -35,7 +35,11 @@ The gradient of $g_{ij}$ with respect to the gate score $s_{ij}$ is:
 
 $$\frac{\partial g_{ij}}{\partial s_{ij}} = g_{ij}(1 - g_{ij})$$
 
-Combined with the L1 penalty gradient:
+Applying the chain rule through both the L1 penalty and the sigmoid gives the full derivation:
+
+$$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial s_{ij}} = \lambda \cdot \frac{\partial \sum_{i,j} g_{ij}}{\partial g_{ij}} \cdot \frac{\partial g_{ij}}{\partial s_{ij}} = \lambda \cdot \underbrace{1}_{\text{L1 gradient}} \cdot \underbrace{g_{ij}(1 - g_{ij})}_{\text{sigmoid Jacobian}}$$
+
+The $\cdot 1 \cdot$ term is the key: it is the constant L1 gradient with respect to $g$, which distinguishes L1 from L2 (where the corresponding term would be $2g_{ij}$, vanishing as $g \to 0$). The full gradient that actually reaches $s_{ij}$ is therefore:
 
 $$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial s_{ij}} = \lambda \cdot g_{ij}(1 - g_{ij})$$
 
