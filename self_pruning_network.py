@@ -39,21 +39,24 @@ logging.basicConfig(
 logger = logging.getLogger("self_pruning_network")
 
 # Constants
-# 
 SPARSITY_THRESHOLD: float = 5e-2  # Gate values below this are considered pruned
 
 
 # PART 1 — Prunable Linear Layer
 
 class PrunableLinear(nn.Module):
-    """A layer that is fully linked and has learnable per-weight gate parameters.
+    """Fully-connected layer with learnable per-weight gate parameters.
 
-    Prior to the linear transformation, each weight “w_ij`` is multiplied element-wise by ```sigmoid(gate_score_ij)`.  Unimportant gates are driven towards 0 during training by an L1 penalty on the gate values, hence pruning corresponding weights.
-    Parameters-
+    Each weight ``w_ij`` is multiplied element-wise by ``sigmoid(gate_score_ij)``
+    before the linear transformation.  An L1 penalty on the gate values drives
+    unimportant connections towards zero, effectively pruning them.
+
+    Parameters
+    ----------
     in_features : int
-        Size of each of the input sample.
+        Size of each input sample.
     out_features : int
-        Size of each of theoutput sample.
+        Size of each output sample.
     """
 
     def __init__(self, in_features: int, out_features: int) -> None:
@@ -85,11 +88,13 @@ class PrunableLinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with gated weights.
 
-        Parameters->
+        Parameters
+        ----------
         x : torch.Tensor
             Input tensor of shape ``(batch, in_features)``.
 
-        Returns->
+        Returns
+        -------
         torch.Tensor
             Output tensor of shape ``(batch, out_features)``.
         """
@@ -103,43 +108,62 @@ class PrunableLinear(nn.Module):
 
 # PART 2 — Self-Pruning Network
 class SelfPruningNet(nn.Module):
-    """Feed-forward classifier for CIFAR-10 using the ``PrunableLinear`` layers.
+    """Feed-forward classifier using ``PrunableLinear`` layers.
 
-    Architecture::
+    Architecture is defined by *layer_sizes*. With the default
+    ``[3072, 512, 256, 128, 10]``::
 
-        Flatten(3×32×32=3072)
-        → PrunableLinear(3072, 512) → ReLU → Dropout(0.3)
-        → PrunableLinear(512,  256) → ReLU → Dropout(0.3)
-        → PrunableLinear(256,  128) → ReLU
-        → PrunableLinear(128,   10)          [logits]
+        Flatten → PrunableLinear(3072→512) → ReLU → Dropout
+                → PrunableLinear(512→256)  → ReLU → Dropout
+                → PrunableLinear(256→128)  → ReLU
+                → PrunableLinear(128→10)             [logits]
+
+    Parameters
+    ----------
+    layer_sizes : list[int] or None
+        Feature sizes from input to output. Defaults to the CIFAR-10
+        architecture shown above.
+    dropout_p : float
+        Dropout probability applied after hidden relu layers (except the last).
     """
 
-    def __init__(self) -> None:
+    _DEFAULT_LAYERS: list[int] = [3072, 512, 256, 128, 10]
+
+    def __init__(
+        self,
+        layer_sizes: list[int] | None = None,
+        dropout_p: float = 0.3,
+    ) -> None:
         super().__init__()
+        sizes = layer_sizes or self._DEFAULT_LAYERS
         self.flatten = nn.Flatten()
-        self.fc1 = PrunableLinear(3072, 512)
-        self.fc2 = PrunableLinear(512, 256)
-        self.fc3 = PrunableLinear(256, 128)
-        self.fc4 = PrunableLinear(128, 10)
+        self.layers = nn.ModuleList(
+            PrunableLinear(sizes[i], sizes[i + 1]) for i in range(len(sizes) - 1)
+        )
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.3)
+        self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the network.
+        """Forward pass: relu+dropout on hidden layers; raw logits from the last.
 
-        Parameters->
+        Parameters
+        ----------
         x : torch.Tensor
-            Batch of CIFAR-10 images, shape ``(B, 3, 32, 32)``.
+            Batch of images, shape ``(B, C, H, W)``.
 
-        Returns->
+        Returns
+        -------
         torch.Tensor
-            Class logits of shape ``(B, 10)``.
+            Class logits of shape ``(B, num_classes)``.
         """
         x = self.flatten(x)
-        x = self.dropout(self.relu(self.fc1(x)))
-        x = self.dropout(self.relu(self.fc2(x)))
-        x = self.relu(self.fc3(x))
-        x = self.fc4(x)
+        last_idx = len(self.layers) - 1
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            if i < last_idx:           # hidden layers get relu
+                x = self.relu(x)
+                if i < last_idx - 1:   # all but the penultimate also get dropout
+                    x = self.dropout(x)
         return x
 
     # ---- gate inspection helpers ----------------------------------------
@@ -147,27 +171,35 @@ class SelfPruningNet(nn.Module):
     def get_all_gates(self) -> torch.Tensor:
         """Concatenate sigmoid-activated gate values from every ``PrunableLinear`` layer.
 
-        Returns->
+        Returns
+        -------
         torch.Tensor
-            1-D tensor containing all gate values in the network.
+            1-D tensor of all gate values.
         """
-        gates: list[torch.Tensor] = []
-        for module in self.modules():
-            if isinstance(module, PrunableLinear):
-                gates.append(torch.sigmoid(module.gate_scores).flatten())
-        return torch.cat(gates)
+        return torch.cat([
+            torch.sigmoid(layer.gate_scores).flatten() for layer in self.layers
+        ])
 
-    def sparsity_level(self, threshold: float = SPARSITY_THRESHOLD) -> float:
-        """Percentage of gate values below *threshold* value
-
-        Higher percentage means more weights are effectively pruned.
-
-        Parameters->
-        
-        threshold : float
-            Gate values below this are considered "pruned".
+    def sparsity_loss(self) -> torch.Tensor:
+        """L1 sparsity penalty: sum of all sigmoid gate values (always positive).
 
         Returns
+        -------
+        torch.Tensor
+            Scalar sparsity loss.
+        """
+        return self.get_all_gates().sum()
+
+    def sparsity_level(self, threshold: float = SPARSITY_THRESHOLD) -> float:
+        """Percentage of gate values below *threshold*.
+
+        Parameters
+        ----------
+        threshold : float
+            Gate values below this are considered pruned.
+
+        Returns
+        -------
         float
             Sparsity percentage in ``[0, 100]``.
         """
@@ -178,24 +210,6 @@ class SelfPruningNet(nn.Module):
 
 
 # PART 3 — Loss Computation
-def compute_sparsity_loss(model: SelfPruningNet) -> torch.Tensor:
-    """L1 norm of all gate values across every PrunableLinear layer.
-
-    Since gates = sigmoid(gate_scores) are always positive, L1 = sum.
-
-    Parameters->
-    
-    model : SelfPruningNet
-        The network whose gate values are penalised.
-
-    Returns->
-    
-    torch.Tensor
-        Scalar sparsity loss.
-    """
-    return model.get_all_gates().sum()
-
-
 def compute_total_loss(
     logits: torch.Tensor,
     targets: torch.Tensor,
@@ -204,24 +218,24 @@ def compute_total_loss(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total loss = Cross Entropy + λ × Sparsity Loss.
 
-    Parameters->
-    
+    Parameters
+    ----------
     logits : torch.Tensor
-        Raw model output (B, 10).
+        Raw model output ``(B, num_classes)``.
     targets : torch.Tensor
-        Ground-truth class indices (B,).
+        Ground-truth class indices ``(B,)``.
     model : SelfPruningNet
-        Network (for gate access).
+        Network (for gate access via ``model.sparsity_loss()``).
     lam : float
         Sparsity coefficient λ.
 
     Returns
-    
+    -------
     tuple[torch.Tensor, torch.Tensor, torch.Tensor]
         ``(total_loss, ce_loss, sparsity_loss)``
     """
     ce_loss = F.cross_entropy(logits, targets)
-    sp_loss = compute_sparsity_loss(model)
+    sp_loss = model.sparsity_loss()
     total = ce_loss + lam * sp_loss
     return total, ce_loss, sp_loss
 
@@ -241,8 +255,8 @@ def get_dataloaders(
     The original 50 000-image training set is split 45 000 / 5 000 for
     train / val.  Standard normalisation is applied.
 
-    Parameters->
-   
+    Parameters
+    ----------
     batch_size : int
         Mini-batch size.
     data_dir : str
@@ -250,8 +264,8 @@ def get_dataloaders(
     num_workers : int
         DataLoader workers.
 
-    Returns->
-    
+    Returns
+    -------
     tuple[DataLoader, DataLoader, DataLoader]
         ``(train_loader, val_loader, test_loader)``
     """
@@ -302,8 +316,8 @@ def train_one_epoch(
 ) -> tuple[float, float]:
     """Train for one epoch.
 
-    Returns->
-    
+    Returns
+    -------
     tuple[float, float]
         ``(avg_total_loss, avg_ce_loss)``
     """
@@ -333,10 +347,10 @@ def evaluate(
     loader: DataLoader,
     lam: float,
 ) -> tuple[float, float, float]:
-    """Evaluate on a dataset
+    """Evaluate on a dataset.
 
     Returns
-    
+    -------
     tuple[float, float, float]
         ``(avg_loss, accuracy_pct, sparsity_pct)``
     """
@@ -368,8 +382,8 @@ def train_model(
 ) -> dict:
     """Full training run for a given λ value.
 
-    Parameters->
-    
+    Parameters
+    ----------
     lam : float
         Sparsity coefficient.
     epochs : int
@@ -379,8 +393,8 @@ def train_model(
     batch_size : int
         Mini-batch size.
 
-    Returns->
-    
+    Returns
+    -------
     dict
         Summary with keys: lambda, test_accuracy, sparsity_level,
         best_val_accuracy, epoch_logs, checkpoint_path.
@@ -455,6 +469,57 @@ def train_model(
 
 # PART 6 — Plotting
 
+_BAR_COLORS: list[str] = ["#2ecc71", "#3498db", "#e74c3c", "#9b59b6", "#e67e22"]
+
+
+def _plot_lambda_bar_chart(
+    results: list[dict],
+    key: str,
+    ylabel: str,
+    title: str,
+    filename: str,
+) -> str:
+    """Shared bar-chart helper: one bar per λ value.
+
+    Parameters
+    ----------
+    results : list[dict]
+        Result dicts from ``train_model``.
+    key : str
+        Key in each result dict to plot on the y-axis.
+    ylabel : str
+        Y-axis label.
+    title : str
+        Plot title.
+    filename : str
+        Output filename (relative to ``PLOT_DIR``).
+
+    Returns
+    -------
+    str
+        Path to the saved PNG.
+    """
+    lambdas = [str(r["lambda"]) for r in results]
+    values = [r[key] for r in results]
+    colors = _BAR_COLORS[: len(lambdas)]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    bars = ax.bar(lambdas, values, color=colors, edgecolor="black")
+    ax.set_xlabel("Lambda (λ)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.set_ylim(0, 100)
+    for bar, val in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                f"{val:.1f}%", ha="center", fontweight="bold")
+    fig.tight_layout()
+
+    path = PLOT_DIR / filename
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    logger.info("Saved plot → %s", path)
+    return str(path)
+
 
 def plot_gate_distribution(model: SelfPruningNet, lam: float) -> str:
     """Histogram of gate values for the given model.
@@ -492,77 +557,84 @@ def plot_gate_distribution(model: SelfPruningNet, lam: float) -> str:
 
 
 def plot_accuracy_vs_lambda(results: list[dict]) -> str:
-    """Bar chart: test accuracy for each λ.
-
-    Parameters
-    ----------
-    results : list[dict]
-        List of result dicts from ``train_model``.
-
-    Returns
-    -------
-    str
-        Path to saved PNG.
-    """
-    lambdas = [str(r["lambda"]) for r in results]
-    accs = [r["test_accuracy"] for r in results]
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    bars = ax.bar(lambdas, accs, color=["#2ecc71", "#3498db", "#e74c3c"], edgecolor="black")
-    ax.set_xlabel("Lambda (λ)")
-    ax.set_ylabel("Test Accuracy (%)")
-    ax.set_title("Test Accuracy vs. Sparsity Coefficient λ")
-    ax.set_ylim(0, 100)
-    for bar, acc in zip(bars, accs):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-                f"{acc:.1f}%", ha="center", fontweight="bold")
-    fig.tight_layout()
-
-    path = PLOT_DIR / "accuracy_vs_lambda.png"
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    logger.info("Saved accuracy vs λ plot → %s", path)
-    return str(path)
+    """Bar chart: test accuracy for each λ."""
+    return _plot_lambda_bar_chart(
+        results,
+        key="test_accuracy",
+        ylabel="Test Accuracy (%)",
+        title="Test Accuracy vs. Sparsity Coefficient λ",
+        filename="accuracy_vs_lambda.png",
+    )
 
 
 def plot_sparsity_vs_lambda(results: list[dict]) -> str:
-    """Bar chart: sparsity level for each λ.
+    """Bar chart: sparsity level for each λ."""
+    return _plot_lambda_bar_chart(
+        results,
+        key="sparsity_level",
+        ylabel="Sparsity Level (%)",
+        title="Sparsity Level vs. Sparsity Coefficient λ",
+        filename="sparsity_vs_lambda.png",
+    )
+
+
+# PART 7 — Checkpoint Migration
+
+# Maps the legacy fc1/fc2/fc3/fc4 parameter-name prefixes (used before the
+# SelfPruningNet refactor) to the current layers.0/1/2/3 scheme.
+_KEY_REMAP: dict[str, str] = {
+    "fc1.": "layers.0.",
+    "fc2.": "layers.1.",
+    "fc3.": "layers.2.",
+    "fc4.": "layers.3.",
+}
+
+
+def migrate_checkpoints(checkpoint_dir: Path = CHECKPOINT_DIR) -> None:
+    """Remap legacy checkpoint keys (fc1…fc4) to the current naming (layers.0…3).
+
+    This is idempotent: checkpoints whose keys are already up to date are
+    skipped without modification.  Call once before loading any saved model.
 
     Parameters
     ----------
-    results : list[dict]
-        List of result dicts from ``train_model``.
-
-    Returns
-    -------
-    str
-        Path to saved PNG.
+    checkpoint_dir : Path
+        Directory containing ``.pt`` checkpoint files.
     """
-    lambdas = [str(r["lambda"]) for r in results]
-    sparsity = [r["sparsity_level"] for r in results]
+    for pt_file in sorted(checkpoint_dir.glob("*.pt")):
+        state: dict = torch.load(pt_file, map_location="cpu", weights_only=True)
 
-    fig, ax = plt.subplots(figsize=(7, 5))
-    bars = ax.bar(lambdas, sparsity, color=["#2ecc71", "#3498db", "#e74c3c"], edgecolor="black")
-    ax.set_xlabel("Lambda (λ)")
-    ax.set_ylabel("Sparsity Level (%)")
-    ax.set_title("Sparsity Level vs. Sparsity Coefficient λ")
-    ax.set_ylim(0, 100)
-    for bar, sp in zip(bars, sparsity):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-                f"{sp:.1f}%", ha="center", fontweight="bold")
-    fig.tight_layout()
+        # If none of the keys start with a legacy prefix, nothing to do.
+        if not any(k.startswith(tuple(_KEY_REMAP)) for k in state):
+            logger.info("Checkpoint already up-to-date, skipping: %s", pt_file.name)
+            continue
 
-    path = PLOT_DIR / "sparsity_vs_lambda.png"
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    logger.info("Saved sparsity vs λ plot → %s", path)
-    return str(path)
+        migrated: dict = {}
+        for key, value in state.items():
+            new_key = key
+            for old_prefix, new_prefix in _KEY_REMAP.items():
+                if key.startswith(old_prefix):
+                    new_key = new_prefix + key[len(old_prefix):]
+                    break
+            migrated[new_key] = value
+
+        torch.save(migrated, pt_file)
+        logger.info("Migrated checkpoint: %s", pt_file.name)
 
 
 # MAIN — run all experiments
 
-
 LAMBDA_VALUES: list[float] = [1e-6, 1e-5, 1e-4]
+
+
+def _print_results_table(results: list[dict]) -> None:
+    """Print a formatted summary table of all experiment results."""
+    print("\n" + "=" * 60)
+    print(f"{'Lambda':<12} {'Test Acc (%)':<18} {'Sparsity (%)':<18}")
+    print("-" * 60)
+    for r in results:
+        print(f"{r['lambda']:<12} {r['test_accuracy']:<18.2f} {r['sparsity_level']:<18.2f}")
+    print("=" * 60)
 
 
 def main() -> None:
@@ -570,18 +642,17 @@ def main() -> None:
     logger.info("Device: %s", DEVICE)
     logger.info("Lambda values to evaluate: %s", LAMBDA_VALUES)
 
+    # Migrate any checkpoints saved before the SelfPruningNet refactor
+    # (fc1/fc2/fc3/fc4 → layers.0/1/2/3).  Idempotent — safe on fresh runs.
+    migrate_checkpoints()
+
     all_results: list[dict] = []
     for lam in LAMBDA_VALUES:
         result = train_model(lam=lam, epochs=30)
         all_results.append(result)
 
     # ── Print results table ──────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print(f"{'Lambda':<12} {'Test Acc (%)':<18} {'Sparsity (%)':<18}")
-    print("-" * 60)
-    for r in all_results:
-        print(f"{r['lambda']:<12} {r['test_accuracy']:<18.2f} {r['sparsity_level']:<18.2f}")
-    print("=" * 60)
+    _print_results_table(all_results)
 
     # ── Gate distribution plot for best model ────────────────────────────
     best = max(all_results, key=lambda r: r["test_accuracy"])

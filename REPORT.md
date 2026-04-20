@@ -79,7 +79,7 @@ Key observations:
 - **A second cluster near 0.8–0.95** visible as a rising plateau on the right side of the log-scale plot. These are the connections the network preserved; they retain high gate values because their CE gradient outweighed the L1 pressure.
 - **Decaying middle region (0.05–0.7)** gates that were partially penalised but not yet fully saturated in either direction within 30 epochs.
 
-The distribution shows the two populations , a large group near 0 (pruned) and a smaller but distinct group away from 0 (surviving). The sparsity threshold is set at 5e-02.
+The distribution shows the two populations — a large group near 0 (pruned) and a smaller but distinct group away from 0 (surviving). The sparsity threshold is set at 5e-02.
 
 ---
 
