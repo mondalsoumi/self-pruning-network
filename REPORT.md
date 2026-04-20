@@ -27,7 +27,7 @@ The key difference between L1 and L2 regularisation lies in their **gradient beh
 
 The table above compares penalty gradients with respect to $g$ directly. With L2, the gradient $2g$ shrinks toward zero as $g \to 0$, providing **diminishing pressure** on small gates. With L1, the gradient with respect to $g$ is a constant $+1$ — every active gate receives **equal penalty regardless of its magnitude**.
 
-However, the optimiser does not update $g$ directly; it updates the underlying gate score $s$. The actual gradient that reaches $s$ passes through the sigmoid derivative and vanishes as $g \to 0$ (see **Gradient Flow** below). The reason L1 still drives gates to zero is more subtle: L1 penalises all active gates equally rather than easing off on small ones the way L2 does. Combined with the sigmoid squashing, once a gate begins drifting toward 0, the effective weight $w_{ij} \cdot g_{ij} \to 0$, so the cross-entropy loss stops defending that connection. With no sufficient CE gradient to resist the L1 pressure, the gate collapses fully — producing genuinely **sparse** solutions.
+However, the optimiser does not update $g$ directly; it updates the underlying gate score $s$. The actual gradient that reaches $s$ passes through the sigmoid derivative and vanishes as $g \to 0$ (see **Gradient Flow** below). The reason L1 still drives gates to zero is because L1 penalises all active gates equally rather than easing off on small ones the way L2 does. Combined with the sigmoid squashing, once a gate begins drifting toward 0, the effective weight $w_{ij} \cdot g_{ij} \to 0$, so the cross-entropy loss stops defending that connection. With no sufficient CE gradient to resist the L1 pressure, the gate collapses fully thereby producing genuinely **sparse** solutions.
 
 ### Gradient Flow Through the Gate
 
@@ -39,7 +39,7 @@ Combined with the L1 penalty gradient:
 
 $$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial s_{ij}} = \lambda \cdot g_{ij}(1 - g_{ij})$$
 
-When a gate is near 0, this gradient is small — already-pruned gates stay pruned because the sparsity loss no longer pushes them further. When a gate is near 0.5, the gradient is maximal: the optimiser must decide whether the CE benefit of keeping the connection outweighs the L1 penalty. Gates whose connections are redundant receive little CE support and are gradually driven to zero.
+When a gate is near 0, this gradient is small: already-pruned gates stay pruned because the sparsity loss no longer pushes them further. When a gate is near 0.5, the gradient is maximal: the optimiser must decide whether the CE benefit of keeping the connection outweighs the L1 penalty. Gates whose connections are redundant receive little CE support and are gradually driven to zero.
 
 ---
 
