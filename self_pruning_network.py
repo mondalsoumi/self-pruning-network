@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Self-Pruning Neural Network on CIFAR-10
-========================================
-A neural network that learns to prune itself during training by using
+Self-Pruning Neural Network on CIFAR-10 dataset
+A neural network that learns to prune on it's own during training by using
 learnable gate parameters on each weight. An L1 sparsity penalty on the
 sigmoid-activated gates drives unimportant connections to zero.
 
-Author : Swapnil
-Project: Tredence Analytics — AI Engineering Intern Case Study
+
 """
 
 import logging
@@ -16,6 +14,7 @@ import time
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend for server environments
 import matplotlib.pyplot as plt
 import torch
@@ -24,18 +23,14 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-# ---------------------------------------------------------------------------
 # Project paths
-# ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
 PLOT_DIR = PROJECT_ROOT / "plots"
 CHECKPOINT_DIR.mkdir(exist_ok=True)
 PLOT_DIR.mkdir(exist_ok=True)
 
-# ---------------------------------------------------------------------------
 # Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -43,29 +38,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("self_pruning_network")
 
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
+# 
 SPARSITY_THRESHOLD: float = 5e-2  # Gate values below this are considered pruned
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PART 1 — PrunableLinear Layer
-# ═══════════════════════════════════════════════════════════════════════════
+# PART 1 — Prunable Linear Layer
+
 class PrunableLinear(nn.Module):
-    """A fully-connected layer with learnable per-weight gate parameters.
+    """A layer that is fully linked and has learnable per-weight gate parameters.
 
-    Each weight ``w_ij`` is multiplied element-wise by
-    ``sigmoid(gate_score_ij)`` before the linear transformation.  During
-    training, an L1 penalty on the gate values drives unimportant gates
-    towards 0, effectively pruning the corresponding weights.
-
-    Parameters
-    ----------
+    Prior to the linear transformation, each weight “w_ij`` is multiplied element-wise by ```sigmoid(gate_score_ij)`.  Unimportant gates are driven towards 0 during training by an L1 penalty on the gate values, hence pruning corresponding weights.
+    Parameters-
     in_features : int
-        Size of each input sample.
+        Size of each of the input sample.
     out_features : int
-        Size of each output sample.
+        Size of each of theoutput sample.
     """
 
     def __init__(self, in_features: int, out_features: int) -> None:
@@ -77,11 +65,10 @@ class PrunableLinear(nn.Module):
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias = nn.Parameter(torch.empty(out_features))
 
-        # Gate scores — same shape as weight; initialised to 3.0 so that
+        # Gate scores — same shape as weight; initialised to 3.0 such that
         # sigmoid(3.0) ≈ 0.953 (gates start near fully-open).  Starting
         # near 1 means the CE gradient can keep important connections at
-        # high values while L1 drives unimportant ones to exactly 0,
-        # producing the expected bimodal gate distribution.
+        # high values while L1 drives unimportant ones to exactly 0
         self.gate_scores = nn.Parameter(torch.empty(out_features, in_features))
 
         self._reset_parameters()
@@ -92,19 +79,17 @@ class PrunableLinear(nn.Module):
         nn.init.zeros_(self.bias)
         # sigmoid(3.0) ≈ 0.953 — gates start near fully-open.  Important
         # connections are kept there by the CE gradient; unimportant ones
-        # are pushed to 0 by L1, creating the bimodal distribution.
+        # are pushed to 0 by L1, creating bimodal distribution.
         nn.init.constant_(self.gate_scores, 3.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with gated weights.
 
-        Parameters
-        ----------
+        Parameters->
         x : torch.Tensor
             Input tensor of shape ``(batch, in_features)``.
 
-        Returns
-        -------
+        Returns->
         torch.Tensor
             Output tensor of shape ``(batch, out_features)``.
         """
@@ -116,11 +101,9 @@ class PrunableLinear(nn.Module):
         return f"in_features={self.in_features}, out_features={self.out_features}"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # PART 2 — Self-Pruning Network
-# ═══════════════════════════════════════════════════════════════════════════
 class SelfPruningNet(nn.Module):
-    """Feed-forward classifier for CIFAR-10 using ``PrunableLinear`` layers.
+    """Feed-forward classifier for CIFAR-10 using the ``PrunableLinear`` layers.
 
     Architecture::
 
@@ -144,13 +127,11 @@ class SelfPruningNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the network.
 
-        Parameters
-        ----------
+        Parameters->
         x : torch.Tensor
             Batch of CIFAR-10 images, shape ``(B, 3, 32, 32)``.
 
-        Returns
-        -------
+        Returns->
         torch.Tensor
             Class logits of shape ``(B, 10)``.
         """
@@ -166,8 +147,7 @@ class SelfPruningNet(nn.Module):
     def get_all_gates(self) -> torch.Tensor:
         """Concatenate sigmoid-activated gate values from every ``PrunableLinear`` layer.
 
-        Returns
-        -------
+        Returns->
         torch.Tensor
             1-D tensor containing all gate values in the network.
         """
@@ -178,17 +158,16 @@ class SelfPruningNet(nn.Module):
         return torch.cat(gates)
 
     def sparsity_level(self, threshold: float = SPARSITY_THRESHOLD) -> float:
-        """Percentage of gate values below *threshold*.
+        """Percentage of gate values below *threshold* value
 
-        A higher percentage means more weights are effectively pruned.
+        Higher percentage means more weights are effectively pruned.
 
-        Parameters
-        ----------
+        Parameters->
+        
         threshold : float
             Gate values below this are considered "pruned".
 
         Returns
-        -------
         float
             Sparsity percentage in ``[0, 100]``.
         """
@@ -198,21 +177,19 @@ class SelfPruningNet(nn.Module):
         return 100.0 * pruned / total
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # PART 3 — Loss Computation
-# ═══════════════════════════════════════════════════════════════════════════
 def compute_sparsity_loss(model: SelfPruningNet) -> torch.Tensor:
     """L1 norm of all gate values across every PrunableLinear layer.
 
     Since gates = sigmoid(gate_scores) are always positive, L1 = sum.
 
-    Parameters
-    ----------
+    Parameters->
+    
     model : SelfPruningNet
         The network whose gate values are penalised.
 
-    Returns
-    -------
+    Returns->
+    
     torch.Tensor
         Scalar sparsity loss.
     """
@@ -225,10 +202,10 @@ def compute_total_loss(
     model: SelfPruningNet,
     lam: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Compute total loss = CrossEntropy + λ × SparsityLoss.
+    """Compute total loss = Cross Entropy + λ × Sparsity Loss.
 
-    Parameters
-    ----------
+    Parameters->
+    
     logits : torch.Tensor
         Raw model output (B, 10).
     targets : torch.Tensor
@@ -239,7 +216,7 @@ def compute_total_loss(
         Sparsity coefficient λ.
 
     Returns
-    -------
+    
     tuple[torch.Tensor, torch.Tensor, torch.Tensor]
         ``(total_loss, ce_loss, sparsity_loss)``
     """
@@ -249,9 +226,7 @@ def compute_total_loss(
     return total, ce_loss, sp_loss
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # PART 4 — Data Loaders
-# ═══════════════════════════════════════════════════════════════════════════
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2470, 0.2435, 0.2616)
 
@@ -266,8 +241,8 @@ def get_dataloaders(
     The original 50 000-image training set is split 45 000 / 5 000 for
     train / val.  Standard normalisation is applied.
 
-    Parameters
-    ----------
+    Parameters->
+   
     batch_size : int
         Mini-batch size.
     data_dir : str
@@ -275,8 +250,8 @@ def get_dataloaders(
     num_workers : int
         DataLoader workers.
 
-    Returns
-    -------
+    Returns->
+    
     tuple[DataLoader, DataLoader, DataLoader]
         ``(train_loader, val_loader, test_loader)``
     """
@@ -313,9 +288,8 @@ def get_dataloaders(
     return train_loader, val_loader, test_loader
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+ 
 # PART 5 — Training & Evaluation
-# ═══════════════════════════════════════════════════════════════════════════
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else
                        "mps" if torch.backends.mps.is_available() else "cpu")
 
@@ -328,8 +302,8 @@ def train_one_epoch(
 ) -> tuple[float, float]:
     """Train for one epoch.
 
-    Returns
-    -------
+    Returns->
+    
     tuple[float, float]
         ``(avg_total_loss, avg_ce_loss)``
     """
@@ -359,10 +333,10 @@ def evaluate(
     loader: DataLoader,
     lam: float,
 ) -> tuple[float, float, float]:
-    """Evaluate on a dataset.
+    """Evaluate on a dataset
 
     Returns
-    -------
+    
     tuple[float, float, float]
         ``(avg_loss, accuracy_pct, sparsity_pct)``
     """
@@ -394,8 +368,8 @@ def train_model(
 ) -> dict:
     """Full training run for a given λ value.
 
-    Parameters
-    ----------
+    Parameters->
+    
     lam : float
         Sparsity coefficient.
     epochs : int
@@ -405,8 +379,8 @@ def train_model(
     batch_size : int
         Mini-batch size.
 
-    Returns
-    -------
+    Returns->
+    
     dict
         Summary with keys: lambda, test_accuracy, sparsity_level,
         best_val_accuracy, epoch_logs, checkpoint_path.
@@ -479,9 +453,8 @@ def train_model(
     return result
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # PART 6 — Plotting
-# ═══════════════════════════════════════════════════════════════════════════
+
 
 def plot_gate_distribution(model: SelfPruningNet, lam: float) -> str:
     """Histogram of gate values for the given model.
@@ -586,9 +559,8 @@ def plot_sparsity_vs_lambda(results: list[dict]) -> str:
     return str(path)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # MAIN — run all experiments
-# ═══════════════════════════════════════════════════════════════════════════
+
 
 LAMBDA_VALUES: list[float] = [1e-6, 1e-5, 1e-4]
 

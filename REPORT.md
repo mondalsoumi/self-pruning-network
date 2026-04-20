@@ -1,6 +1,6 @@
-# Self-Pruning Neural Network — Report
+# Report on Self-Pruning Neural Network 
 
-## 1. Why L1 Penalty on Sigmoid Gates Encourages Sparsity
+## 1. Why L1 Penalty on Sigmoid Gates Encourages Sparsity?
 
 ### The Role of Sigmoid
 
@@ -10,7 +10,7 @@ $$g_{ij} = \sigma(s_{ij}) = \frac{1}{1 + e^{-s_{ij}}}$$
 
 This constrains every gate to the range $(0, 1)$. When $g_{ij} \to 0$, the corresponding weight is effectively removed from the network; when $g_{ij} \to 1$, it is fully active.
 
-### Why L1 (Not L2) Drives Values to Exactly Zero
+### Why L1 (Not L2) Drives Values to Exactly Zero?
 
 The total loss is:
 
@@ -25,7 +25,7 @@ The key difference between L1 and L2 regularisation lies in their **gradient beh
 | L1   | $\|g\|$ | $+1$ (constant)                   |
 | L2   | $g^2$   | $2g$ (vanishes as $g \to 0$)      |
 
-With L2, the gradient of the penalty shrinks to zero as the gate approaches zero, so it never quite reaches exactly zero. With **L1, the gradient remains constant at $+1$** regardless of how small $g$ is — there is always a fixed "push" driving the gate down, which is why L1 regularisation produces genuinely **sparse** solutions.
+With L2, the gradient of the penalty shrinks to zero as the gate approaches zero, so it never quite reaches exactly zero. With **L1, the gradient remains constant at $+1$** regardless of how small $g$ is there is always a fixed "push" driving the gate down, which is why L1 regularisation produces genuinely **sparse** solutions.
 
 ### Gradient Flow Through the Gate
 
@@ -55,9 +55,9 @@ When a gate is near 0, this gradient is small (so already-pruned gates stay prun
 
 - **λ = 1e-06 (low):** The sparsity penalty is weak. Only 15.63% of gates are pruned; the network retains most connections and behaves close to a standard feed-forward network. Accuracy is 51.16%.
 
-- **λ = 1e-05 (medium):** A well-balanced tradeoff. The network prunes **81.06%** of its connections while maintaining the highest test accuracy of **53.73%**. The L1 penalty is strong enough to drive aggressive sparsity without significantly harming task performance. This is the **best balance**.
+- **λ = 1e-05 (medium):** Shows well-balanced tradeoff. The network prunes **81.06%** of its connections while maintaining the highest test accuracy of **53.73%**. The L1 penalty is strong enough to drive aggressive sparsity without significantly harming task performance. This is the **best balance**.
 
-- **λ = 0.0001 (high):** The sparsity penalty dominates. Over **99%** of gates are driven below the threshold, producing an almost entirely sparse network. Despite this extreme compression, test accuracy remains at 51.09% — remarkably close to the low-λ result — confirming that the vast majority of weights are genuinely redundant for CIFAR-10.
+- **λ = 0.0001 (high):** The sparsity penalty dominates. Over **99%** of gates are driven below the threshold, producing an almost entirely sparse network. Despite this extreme compression, test accuracy remains at 51.09%, remarkably close to the low-λ result confirming that the vast majority of weights are genuinely redundant for CIFAR-10.
 
 **Best balance:** λ = 1e-05 offers the most practical tradeoff — it achieves 81.06% sparsity (dramatic compression) while achieving the highest test accuracy of 53.73%.
 
@@ -69,15 +69,15 @@ The gate distribution histogram for the best model (λ = 1e-05) is plotted on a 
 
 Key observations:
 
-- **Large spike at 0** — approximately 81% of gates are below the pruning threshold (5e-2). These connections have been effectively zeroed out by the L1 penalty.
-- **A second cluster near 0.8–0.95** — visible as a rising plateau on the right side of the log-scale plot. These are the connections the network preserved; they retain high gate values because their CE gradient outweighed the L1 pressure.
-- **Decaying middle region (0.05–0.7)** — gates that were partially penalised but not yet fully saturated in either direction within 30 epochs.
+- **Large spike at 0**, approximately 81% of gates are below the pruning threshold (5e-2). These connections have been effectively zeroed out by the L1 penalty.
+- **A second cluster near 0.8–0.95** visible as a rising plateau on the right side of the log-scale plot. These are the connections the network preserved; they retain high gate values because their CE gradient outweighed the L1 pressure.
+- **Decaying middle region (0.05–0.7)** gates that were partially penalised but not yet fully saturated in either direction within 30 epochs.
 
-The distribution shows the two populations required by the assignment criterion: a large group near 0 (pruned) and a smaller but distinct group away from 0 (surviving). The sparsity threshold is set at 5e-02.
+The distribution shows the two populations , a large group near 0 (pruned) and a smaller but distinct group away from 0 (surviving). The sparsity threshold is set at 5e-02.
 
 ---
 
-## 5. Architecture
+## 5. Network Architecture
 
 ```
 Input Image (3×32×32)
