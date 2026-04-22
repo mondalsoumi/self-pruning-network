@@ -23,7 +23,7 @@ pip install -r requirements.txt
 python self_pruning_network.py
 ```
 
-CIFAR-10 is downloaded automatically on first run. Training runs for 3 λ values (30 epochs each). Results are saved to `checkpoints/` and `plots/`.
+CIFAR-10 is downloaded automatically on first run. Training runs for 3 λ values (60 epochs each). Results are saved to `checkpoints/` and `plots/`.
 
 ---
 
@@ -31,11 +31,11 @@ CIFAR-10 is downloaded automatically on first run. Training runs for 3 λ values
 
 | Lambda | Test Accuracy (%) | Sparsity Level (%) |
 | ------ | ----------------- | ------------------ |
-| 1e-06  | 51.16             | 15.63              |
-| 1e-05  | **53.73**         | **81.06**          |
-| 0.0001 | 51.09             | 99.14              |
+| 1e-06  | **91.85**         | 38.80              |
+| 1e-05  | 91.71             | **87.92**          |
+| 0.0001 | 91.44             | 96.53              |
 
-Best model: **λ = 1e-05** — 81% of weights pruned while retaining 53.73% test accuracy.
+Best model: **λ = 1e-05** — 87.92% of weights pruned while retaining 91.71% test accuracy.
 
 ---
 

@@ -43,7 +43,8 @@ The $\cdot 1 \cdot$ term is the key: it is the constant L1 gradient with respect
 
 $$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial s_{ij}} = \lambda \cdot g_{ij}(1 - g_{ij})$$
 
-When a gate is near 0, this gradient is small: already-pruned gates stay pruned because the sparsity loss no longer pushes them further. When a gate is near 0.5, the gradient is maximal: the optimiser must decide whether the CE benefit of keeping the connection outweighs the L1 penalty. Gates whose connections are redundant receive little CE support and are gradually driven to zero.
+When a gate is near 0, this gradient is small: already-pruned gates stay pruned because the sparsity loss no longer pushes them further. 
+When a gate is near 0.5, the gradient is maximal: the optimiser must decide whether the CE benefit of keeping the connection outweighs the L1 penalty. Gates whose connections are redundant receive little CE support and are gradually driven to zero.
 
 ---
 
@@ -51,35 +52,39 @@ When a gate is near 0, this gradient is small: already-pruned gates stay pruned 
 
 | Lambda | Test Accuracy (%) | Sparsity Level (%) |
 | ------ | ----------------- | ------------------ |
-| 1e-06  | 51.16             | 15.63              |
-| 1e-05  | 53.73             | 81.06              |
-| 0.0001 | 51.09             | 99.14              |
+| 1e-06  | **91.85**         | 38.80              |
+| 1e-05  | 91.71             | **87.92**          |
+| 0.0001 | 91.44             | 96.53              |
+
+Best model (optimal trade-off): **λ = 1e-05** — 87.92% of FC weights pruned while retaining 91.71% test accuracy.
 
 ---
 
 ## 3. Analysis of the λ Tradeoff
 
-- **λ = 1e-06 (low):** The sparsity penalty is weak. Only 15.63% of gates are pruned; the network retains most connections and behaves close to a standard feed-forward network. Accuracy is 51.16%.
+- **λ = 1e-06 (low):** The sparsity penalty is mild relative to the cross-entropy loss. Only 38.80% of gates are pruned; most connections are retained and the network behaves close to an unregularised model. Test accuracy peaks at **91.85%**.
 
-- **λ = 1e-05 (medium):** Shows well-balanced tradeoff. The network prunes **81.06%** of its connections while maintaining the highest test accuracy of **53.73%**. The L1 penalty is strong enough to drive aggressive sparsity without significantly harming task performance. This is the **best balance**.
+- **λ = 1e-05 (medium — optimal):** This is the sweet spot. The network prunes **87.92%** of its FC-layer connections while maintaining **91.71% test accuracy** — a drop of only 0.14% vs. the low-λ baseline. The L1 penalty is strong enough to drive aggressive sparsity without meaningfully harming task performance. The gate distribution for this model shows a clear bimodal shape: a large spike near 0 and a distinct surviving cluster near 1.
 
-- **λ = 0.0001 (high):** The sparsity penalty dominates. Over **99%** of gates are driven below the threshold, producing an almost entirely sparse network. Despite this extreme compression, test accuracy remains at 51.09%, remarkably close to the low-λ result confirming that the vast majority of weights are genuinely redundant for CIFAR-10.
+- **λ = 0.0001 (high):** The sparsity penalty dominates. Over **96.53%** of gates are driven below the threshold, leaving an almost entirely sparse FC head. Despite this extreme compression, test accuracy remains at **91.44%** — only 0.41% below the unpruned baseline — confirming that the CNN backbone carries the representational capacity and the vast majority of FC weights are genuinely redundant.
 
-**Best balance:** λ = 1e-05 offers the most practical tradeoff — it achieves 81.06% sparsity (dramatic compression) while achieving the highest test accuracy of 53.73%.
+**Key insight:** Accuracy is remarkably stable across the full sparsity range (91.85% → 91.44%, a spread of just 0.41%) even as sparsity jumps from 38.80% to 96.53%. This demonstrates that the VGG-style CNN backbone learns robust spatial features, and the prunable FC head can be compressed aggressively with negligible accuracy cost.
+
+**Best balance:** λ = 1e-05 — 87.92% sparsity with 91.71% accuracy.
 
 ---
 
 ## 4. Gate Value Distribution
 
-The gate distribution histogram for the best model (λ = 1e-05) is plotted on a **log y-scale**, which is necessary because the pruned population (~1,000,000 gates near 0) and the surviving population (~1,000–2,000 gates near 0.9–1.0) differ by three orders of magnitude — a linear scale would make the second cluster invisible.
+The gate distribution histogram for the optimal model (λ = 1e-05) is plotted on a **log y-scale**, which is necessary because the pruned population (gates near 0) and the surviving population (gates near 1) differ by several orders of magnitude — a linear scale would make the surviving cluster invisible.
 
 Key observations:
 
-- **Large spike at 0**, approximately 81% of gates are below the pruning threshold (5e-2). These connections have been effectively zeroed out by the L1 penalty.
-- **A second cluster near 0.8–0.95** visible as a rising plateau on the right side of the log-scale plot. These are the connections the network preserved; they retain high gate values because their CE gradient outweighed the L1 pressure.
-- **Decaying middle region (0.05–0.7)** gates that were partially penalised but not yet fully saturated in either direction within 30 epochs.
+- **Large spike at 0:** Approximately **87.92%** of gates fall below the pruning threshold (1e-02). These connections have been effectively zeroed out by the L1 penalty — the network has learned they are redundant for CIFAR-10 classification.
+- **A distinct cluster near 0.9–1.0:** The surviving connections that the cross-entropy gradient defended against L1 pressure. These are the most informative FC connections for the classification task.
+- **Near-empty middle region (0.02–0.8):** Very few gates occupy intermediate values. This bimodal “on/off” distribution is the hallmark of successful L1-driven sparsification, gates commit decisively to either being pruned or surviving.
 
-The distribution shows the two populations — a large group near 0 (pruned) and a smaller but distinct group away from 0 (surviving). The sparsity threshold is set at 5e-02.
+The plot demonstrates **a large spike at 0 and a separate cluster of values away from 0**, with the red dashed pruning threshold (1e-02) cleanly separating the two populations.
 
 ---
 
@@ -88,48 +93,51 @@ The distribution shows the two populations — a large group near 0 (pruned) and
 ```
 Input Image (3×32×32)
         │
-   ┌────▼────┐
-   │ Flatten  │  → 3072
-   └────┬────┘
+┌───────────────────────────────────────────────┐
+│  CNN Backbone (standard, non-prunable)             │
+│                                                    │
+│  Conv(3→64)→BN→ReLU → Conv(64→64)→BN→ReLU         │
+│  MaxPool(2×2)                       [32→16]       │
+│  Conv(64→128)→BN→ReLU → Conv(128→128)→BN→ReLU    │
+│  MaxPool(2×2)                       [16→8]        │
+│  Conv(128→256)→BN→ReLU → Conv(256→256)→BN→ReLU   │
+│  AdaptiveAvgPool(1×1)               [8→1]         │
+│  Flatten                            → 256           │
+└───────────────────────────────────────────────┘
         │
-   ┌────▼──────────────┐
-   │ PrunableLinear     │  3072 → 512
-   │ (weight × gates)  │
-   └────┬──────────────┘
-        │ ReLU → Dropout(0.3)
-   ┌────▼──────────────┐
-   │ PrunableLinear     │  512 → 256
-   │ (weight × gates)  │
-   └────┬──────────────┘
-        │ ReLU → Dropout(0.3)
-   ┌────▼──────────────┐
-   │ PrunableLinear     │  256 → 128
-   │ (weight × gates)  │
-   └────┬──────────────┘
-        │ ReLU
-   ┌────▼──────────────┐
-   │ PrunableLinear     │  128 → 10
-   │ (weight × gates)  │
-   └────┬──────────────┘
+┌───────────────────────────────────────────────┐
+│  Self-Pruning FC Head (prunable)                   │
+│                                                    │
+│  PrunableLinear(256→512)                           │
+│  └─ weight × sigmoid(gate_scores) → F.linear       │
+│  BatchNorm1d(512) → ReLU → Dropout(0.3)            │
+│                                                    │
+│  PrunableLinear(512→256)                           │
+│  └─ weight × sigmoid(gate_scores) → F.linear       │
+│  BatchNorm1d(256) → ReLU → Dropout(0.3)            │
+│                                                    │
+│  PrunableLinear(256→10)  [output logits]           │
+│  └─ weight × sigmoid(gate_scores) → F.linear       │
+└───────────────────────────────────────────────┘
         │
-   ┌────▼────┐
-   │ Logits  │  → 10 classes (CIFAR-10)
-   └─────────┘
+   10 class logits (CIFAR-10)
 
 Gate Mechanism (per PrunableLinear layer):
-  gate_scores ──→ sigmoid() ──→ gates ∈ (0,1)
-  output = F.linear(x, weight * gates, bias)
+  gate_scores  ───→  sigmoid()  ───→  gates ∈ (0, 1)
+  pruned_weights = weight × gates          (element-wise)
+  output         = F.linear(x, pruned_weights, bias)
 
 Loss:
   L_total = CrossEntropy(logits, y) + λ × Σ gates
 ```
 
+The CNN backbone uses standard `nn.Conv2d` + `nn.BatchNorm2d` layers (not prunable). All pruning occurs exclusively in the three `PrunableLinear` layers of the FC head, which together contain the gate parameters that the L1 penalty acts on.
+
 ---
 
 ## 6. Plots
 
-| Plot                       | File                                   |
-| -------------------------- | -------------------------------------- |
-| Gate distribution (best λ) | `plots/gate_distribution_lambda_1e-05.png` |
-| Accuracy vs λ              | `plots/accuracy_vs_lambda.png`         |
-| Sparsity vs λ              | `plots/sparsity_vs_lambda.png`         |
+| Plot | File |
+| ---- | ---- |
+| Gate distribution for optimal model (λ = 1e-05) | `plots/gate_distribution_lambda_1e-05.png` |
+
